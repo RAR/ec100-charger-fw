@@ -23,8 +23,7 @@ reinstalled), and drives the charger's two NASN RM4850-B rectifier modules over 
   the YamBMS relay and firmware updates (installed from GitHub releases with Home Assistant's update button).
 
 **Status.** In active use on two chargers, charging a 16S LFP bank with limits from YamBMS. Tested at up to 100 A
-per charger, and with real Eco-Worthy and JK-PB batteries. Test logs are in
-[docs/history/notes/oem-bringup.md](docs/history/notes/oem-bringup.md).
+per charger, and with real Eco-Worthy and JK-PB batteries.
 
 ## Quick start
 
