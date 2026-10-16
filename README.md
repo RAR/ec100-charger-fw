@@ -22,10 +22,9 @@ reinstalled), and drives the charger's two NASN RM4850-B rectifier modules over 
 - **Remote control:** a Modbus RTU server on the RS485 jack, and an optional ESPHome WiFi bridge for Home Assistant,
   the YamBMS relay and firmware updates (installed from GitHub releases with Home Assistant's update button).
 
-**Status.** In daily use on two chargers charging a 16S LFP bank, with limits from YamBMS through the WiFi bridge.
-Each has run at 75 A and 100 A, with both modules sharing the load evenly and the heatsinks levelling off at about
-85-90 °C. Tested with real batteries: Eco-Worthy and JK-PB packs over Pylontech, and a JK-PB pack directly. EG4 and JK-B
-are tested with simulators only. Test logs: [docs/history/notes/oem-bringup.md](docs/history/notes/oem-bringup.md).
+**Status.** In active use on two chargers, charging a 16S LFP bank with limits from YamBMS. Tested at up to 100 A
+per charger, and with real Eco-Worthy and JK-PB batteries. Test logs are in
+[docs/history/notes/oem-bringup.md](docs/history/notes/oem-bringup.md).
 
 ## Quick start
 
