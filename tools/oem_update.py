@@ -33,7 +33,7 @@ HANDSHAKE = bytes.fromhex("F945F95323")
 HANDSHAKE_REPLY = bytes.fromhex("F9450300219D")
 FRAME_BYTES = 256
 HEADER_ACK_S = 5.0  # erasing 100 pages
-DATA_ACK_S = 1.0
+DATA_ACK_S = 3.0  # a WiFi bridge has delayed an ack past 1 s (frame 187 of 192)
 QUIET_S = 2.0  # > 1.5 s of silence makes the bootloader jump to the app
 
 

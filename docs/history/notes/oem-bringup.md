@@ -233,7 +233,7 @@ Not checked (charger paused on purpose): Pause and Charge now from HA.
 
 Two chargers on one battery bank, one bridge each (own RS485 line: no shared bootloader, both keep address 1). The garage
 bridge is now `eco-charger-b` (esphome/eco-charger-b.yaml); `eco-charger-a` is the second Waveshare, for the other charger
-(still on stock EC100 V2.0.1.1 firmware).
+(still on the stock v1.01.1105 firmware both chargers came with; V2.0.1.1 was only downloaded from the vendor to study).
 - Bridge A (second Waveshare) flashed over USB as `eco-charger-a` (a LAN address), MQTT added to the shared config.
   Charger A taken off stock remotely: `oem_update.py --bridge eco-charger-a.local` + a power-cycle, 109 frames, 3.3
   booted. Set to 3 A / 54.60 / 54.40 V straight away (defaults were 10 A / 57.60 / 57.60). Modules online after AC came
@@ -383,3 +383,19 @@ chargers: Source mode 2, Charge V 57.00, Stop V 57.00, Start SOC 85, Stop SOC 10
 - 100 A each: 99.9 A, ~5.4 kW each, no errors; hottest heatsink 85 -> 91 C over ~2 min, levelling in the low 90s.
 - Back to 75 A (user: both together stay under a 10 kW genset). Paused: all four modules "cooling" with fans on,
   heatsinks 90 -> 62-66 C within a minute, as designed (standby at <= 40 C or 10 min).
+
+## Round trip to stock and back over the bridge, charger B (3.10, 2026-10-16)
+
+- **To stock.** `build/stock-v1.dat` (v1.01.1105 rebuilt from `dumps/gd32_flash_20261012.bin`, 48984 bytes, 192
+  frames) with `oem_update.py --bridge eco-charger-b.local --modbus-reboot`. The first attempt stopped at frame 187: an
+  ack came back later than the then 1 s DATA_ACK_S over WiFi. The tool did as designed (no resend, board left in the
+  bootloader). A retry started before the power-cycle reached the still-running bootloader at once and failed on frame
+  1 with a stale ack for frame 187 (`FB 03 00 00 BB ...`), which is why the power-cycle has to come first. After the
+  user's power-cycle the board stayed in the bootloader (unfinished app), and an install with DATA_ACK_S = 3 s took all
+  192 frames. Stock came up: the stock screen (user), and its Pylontech poll `~201246600000FDAB\r` every 0.5 s on the
+  bridge.
+- **Back.** `oem_update.py --bridge eco-charger-b.local oem/build/charger.dat` (3.10): the bootloader answered about
+  3 s after the handshake started, with no power-cycle (the user thinks the stock app notices the handshake and resets;
+  on the bench, 2026-10-15, it ignored it). 146/146 frames; 3.10 came up paused, and HR 0-6, 9, 14 and 16 read back
+  exactly as before the round trip.
+- `oem_update.py` DATA_ACK_S is now 3 s.

@@ -35,17 +35,25 @@ restarts the board, which opens the bootloader's 1.5 s window without a power-cy
 .venv/bin/python tools/oem_update.py --port /dev/cu.usbserial-XXXX oem/build/charger.dat
 ```
 
-Start `oem_update.py`, then power-cycle the board while it waits. The stock v1 app (1.01.1105) ignores the update handshake on the
-bench, so it doesn't hand over by itself, despite what the vendor updater's code suggests. The bootloader listens for 1.5 s after reset, at 460800 baud on the
-RS485 jack J5.
+Start `oem_update.py`, then power-cycle the board while it waits. The bootloader listens for 1.5 s after reset, at
+460800 baud on the RS485 jack J5. On a charger in the unit, the stock v1 app (1.01.1105) has also handed over by itself
+within a few seconds of the handshake starting (2026-10-16, over the bridge); on the bench it ignored the handshake. If
+nothing happens within a few seconds, power-cycle.
 If the install fails on the first frame with a small-FIFO USB-RS485 adapter, retry with `--frame-bytes 64`.
 
-**Revert to stock.** Rebuild the stock app image from the flash dump, then install it the same way:
+**Revert to stock.** Rebuild the stock app image from a flash dump of the stock board (the stock firmware isn't in this
+repository), then install it the same way. Our firmware hands over by itself, so `--modbus-reboot` (or Up + Down for
+5 s) is enough; no power-cycle:
 
 ```bash
 mkdir -p build && .venv/bin/python tools/oem_image.py --stock-from-dump dumps/gd32_flash_20261012.bin build/stock-v1.dat
-.venv/bin/python tools/oem_update.py --port /dev/cu.usbserial-XXXX build/stock-v1.dat
+.venv/bin/python tools/oem_update.py --port /dev/cu.usbserial-XXXX --modbus-reboot build/stock-v1.dat
+# or over the WiFi bridge: tools/oem_update.py --bridge eco-charger.local --modbus-reboot build/stock-v1.dat
 ```
+
+The stock app comes back with its own settings (it keeps them in a page this firmware doesn't use) and isn't paused,
+so it may start charging at once. Our settings and pause survive in their own pages: installing this firmware again
+later picks them up. Tested on a charger in the unit, over the bridge, both ways (2026-10-16).
 
 **If an install fails, never resend a frame.** The bootloader doesn't check sequence numbers, so a resent frame is
 programmed a second time at the next offset. Power-cycle the board (the bootloader erases only once per boot) and run `oem_update.py` again from the start. Once
