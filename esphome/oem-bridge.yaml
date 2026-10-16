@@ -92,6 +92,7 @@ http_request:
 # (docs/history/superpowers/specs/2026-10-16-bridge-charger-update-design.md).
 update:
   - platform: charger_update
+    id: charger_fw_update
     name: Charger firmware update
     mux_id: mux
     uart_id: rs485
@@ -920,6 +921,13 @@ number:
     skip_updates: 5
 
 button:
+  # Asks GitHub for the latest charger release now, instead of waiting for the 6-hourly check.
+  - platform: template
+    name: Check charger firmware
+    icon: mdi:update
+    entity_category: diagnostic
+    on_press:
+      - component.update: charger_fw_update
   - platform: template
     name: Charge now
     icon: mdi:battery-charging
