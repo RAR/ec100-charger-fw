@@ -68,7 +68,7 @@ static void test_defaults_and_ranges() {
   CHECK(s.get(HR_CHARGE_V) == 5760);
   CHECK(s.get(HR_START_SOC) == 20 && s.get(HR_STOP_SOC) == 100);
   CHECK(s.get(HR_START_V) == 4200 && s.get(HR_STOP_V) == 5760);
-  CHECK(s.get(HR_FALLBACK_A) == 10 && s.get(HR_BACKLIGHT_S) == 120);
+  CHECK(s.get(HR_FALLBACK_A) == 0 && s.get(HR_BACKLIGHT_S) == 120);
   CHECK(s.get(HR_MODULE_FALLBACK_V) == 5400 && s.get(HR_MODULE_FALLBACK_A) == 5);
   Settings c = s;
   apply_clamps(c);

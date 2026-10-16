@@ -23,8 +23,9 @@ The OEM firmware can take its limits from a BMS on the RS485 jack instead of the
 - **Stale rule.** Without a valid 0x61, 0x62 and 0x63 within 3 s the charger raises E15 (since 3.11 the alarm reply
   counts too: a BMS whose alarms can't be read isn't charged from at its own limits) and charges on the Panel limits,
   with the current capped at Fallback current (HR 9), unless the BMS's last fresh word was a stop (charge enable off or
-  an alarm): then it stays stopped, with E15, until the BMS answers again. Set Fallback current to 0 to stop charging
-  when the BMS is gone.
+  an alarm): then it stays stopped, with E15, until the BMS answers again. Fallback current defaults to 0 (since 3.13):
+  no charging without the BMS, so a miswired or misconfigured BMS can't be charged blind. Set it above 0 (HR 9, over
+  Modbus) to keep charging at that current when the BMS goes quiet. Settings already saved keep their value.
 - **No bridge polling with a real BMS.** The WiFi bridge's Modbus polls would collide with the charger's requests on the
   jack. With a real BMS connected, disconnect the bridge; leave Passthrough on only while using `fake_pylon.py`.
 - **Simulator.** `tools/fake_pylon.py` plays the BMS, on a serial port or through the bridge's Passthrough:

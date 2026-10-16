@@ -1,6 +1,6 @@
 # Panel controls — replacement charger firmware
 
-How the front panel works with the replacement firmware (version 3.12) on the 48 V charger's control board. This
+How the front panel works with the replacement firmware (version 3.13) on the 48 V charger's control board. This
 covers the buttons, the display, the LEDs and the settings menu only. It is not the vendor's manual; for installation,
 wiring and safety, keep the original manual.
 
@@ -116,8 +116,8 @@ on item 7, the SOC field shows item 8's value (the Modbus address, usually `1`),
   Max current. It stops when the pack turns charging off (or its max charge current is 0) or reports a charge alarm (**E12**); cell over-voltage stops it
   without E12, which is normal at full; under-voltage never stops it. The jack belongs to the BMS, as in mode 3. Menu only.
 - If the BMS (Pylontech, EG4, JK, JK-PB: 3 s) or the bridge (Modbus: 10 s) stops answering, the charger shows **E15** and falls back to
-  its own settings, limited to the *Fallback current* (set over Modbus, default 10 A; 0 means "never charge without the
-  BMS"). If the last word was "stop" or an alarm, it stays stopped until the BMS or bridge answers again, or Source mode is changed.
+  its own settings, limited to the *Fallback current* (set over Modbus; the default, 0, means "never charge without the
+  BMS"; set it to, say, 10 A to keep charging at that current). If the last word was "stop" or an alarm, it stays stopped until the BMS or bridge answers again, or Source mode is changed.
   In Modbus mode "stop" also covers a blocking flag and a current limit of 0.
 - A pause is kept when you change the source mode. A charging session ends: the new source has to start a new one
   (Start SOC / Start V, or **Switch** for Charge now).

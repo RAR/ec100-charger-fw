@@ -156,6 +156,7 @@ static void test_poller_charge_enable_and_alarm() {
 static void test_poller_needs_the_alarm_reply() {
   PylonSource p;
   oem::Settings s = oem::default_settings();
+  s.set(oem::HR_FALLBACK_A, 10);  // the default (3.13) is 0: no charging without the BMS
   run_cycle(p, 0, A61, A62_CLEAR, A63_ON);
   CHECK(p.limits(s, 1100).fresh && !p.limits(s, 1100).stale && p.limits(s, 1100).allowed);
   // 0x62 goes unanswered (or answers with an error) while 0x61 and 0x63 keep coming: stale (E15) after 3 s, on the
@@ -181,10 +182,12 @@ static void test_poller_needs_the_alarm_reply() {
 
 static void test_poller_stale_fallback() {
   PylonSource p;
-  oem::Settings s = oem::default_settings();  // Max current 10 A, Fallback current 10 A
-  Limits l = p.limits(s, 0);  // nothing heard yet
+  oem::Settings s = oem::default_settings();  // Max current 10 A, Fallback current 0 A (3.13)
+  Limits l = p.limits(s, 0);  // nothing heard yet: a fresh install charges nothing without the BMS
   CHECK(l.fresh && l.stale && l.source == oem::SourceMode::PYLONTECH && l.allowed);
-  CHECK_NEAR(l.ccl, 10.0, 0.001);
+  CHECK_NEAR(l.ccl, 0.0, 0.001);
+  s.set(oem::HR_FALLBACK_A, 10);
+  CHECK_NEAR(p.limits(s, 0).ccl, 10.0, 0.001);
   s.set(oem::HR_FALLBACK_A, 4);
   CHECK_NEAR(p.limits(s, 0).ccl, 4.0, 0.001);
   s.set(oem::HR_FALLBACK_A, 0);
@@ -206,6 +209,7 @@ static void go_silent_after(PylonSource &p, const char *a62, const char *a63) {
 
 static void test_poller_stale_after_a_bms_stop() {
   oem::Settings s = oem::default_settings();
+  s.set(oem::HR_FALLBACK_A, 10);  // so "stopped" is told apart from a 0 A fallback
   {
     PylonSource p;  // charge enable off, then silence: still off, though stale
     go_silent_after(p, A62_CLEAR, A63_OFF);
