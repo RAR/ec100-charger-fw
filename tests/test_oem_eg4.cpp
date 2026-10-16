@@ -173,7 +173,8 @@ static void test_poller_alarm_mask() {
 }
 
 static void test_poller_stale_and_latch() {
-  oem::Settings s = oem::default_settings();  // Max 10 A, Fallback 10 A
+  oem::Settings s = oem::default_settings();  // Max 10 A; Fallback 10 A below
+  s.set(oem::HR_FALLBACK_A, 10);  // the default (3.13) is 0
   {
     Eg4Source p;
     Limits l = p.limits(s, 0);

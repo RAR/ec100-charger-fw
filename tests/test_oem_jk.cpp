@@ -301,6 +301,7 @@ static void test_alarm_with_normal_status() {
 
 static void test_poller_stale_and_latch() {
   oem::Settings s = oem::default_settings();
+  s.set(oem::HR_FALLBACK_A, 10);  // the default (3.13) is 0
   {
     JkSource p;
     Limits l = p.limits(s, 0);

@@ -51,7 +51,7 @@ void test_status_registers() {
   g.run_s(60);  // past the module soft-start
   const Status &st = g.ctl.status();
   CHECK(st.state == State::CHARGING);
-  CHECK(g.ir(0) == 0x030C);
+  CHECK(g.ir(0) == 0x030D);
   CHECK(g.ir(1) == 2);
   CHECK(g.ir(2) == 0);
   CHECK(g.ir(3) == 0);
@@ -394,7 +394,7 @@ void test_wire_round_trip() {
   const size_t n = modbus_handle(1, req, 8, resp, g.regs);
   CHECK(n == 3 + 80 + 2);
   CHECK(resp[1] == 4 && resp[2] == 80);
-  CHECK(resp[3] == 0x03 && resp[4] == 0x0C);
+  CHECK(resp[3] == 0x03 && resp[4] == 0x0D);
   CHECK(resp[3 + 2 * 6] == (5760 >> 8) && resp[4 + 2 * 6] == (5760 & 0xFF));
   CHECK(resp[3 + 2 * 19] == 0xFF && resp[4 + 2 * 19] == 0xFF);
   const uint16_t rcrc = crc16_modbus(resp, n - 2);

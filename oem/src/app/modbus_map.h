@@ -13,7 +13,7 @@
 
 namespace oem {
 
-constexpr uint16_t OEM_FW_VERSION = 0x030C;
+constexpr uint16_t OEM_FW_VERSION = 0x030D;
 constexpr uint16_t HR_HEARTBEAT = 100, HR_EXT_FIRST = 101, HR_EXT_LAST = 107, HR_PAUSE = 110, HR_CLEAR_FAULT = 111,
                    HR_RELAY_CMD = 112, HR_CHARGE_NOW = 113, HR_REBOOT = 120;
 constexpr uint16_t REBOOT_MAGIC = 0xB007;
