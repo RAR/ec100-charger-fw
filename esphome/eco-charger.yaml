@@ -1,0 +1,348 @@
+esphome:
+  name: eco-charger
+  friendly_name: Eco Charger
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+  logs:
+    canbus: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+  reboot_timeout: 0s  # charging must not depend on HA or WiFi
+  actions:
+    # Diagnostic: read-only sweep of 0x0100-0x02FF on both PSUs (cmd 0x82 only), replies logged as [scan].
+    - action: scan_registers
+      variables:
+        start: int
+        end: int
+      then:
+        - lambda: |-
+            id(scan_start) = std::max<int>(0, std::min<int>(start, 0x0FFF));
+            id(scan_end) = std::max<int>(id(scan_start), std::min<int>(end, 0x0FFF));
+            id(scan_reg) = id(scan_start);
+            id(scan_addr) = 1;
+            id(scanning) = true;
+            ESP_LOGI("scan", "=== register scan start 0x%04X-0x%04X ===", id(scan_start), id(scan_end));
+    # Diagnostic: send one request frame (all-zero payload) with an arbitrary Huawei command to a PSU address.
+    # Only read-type commands are allowed (0x40 data, 0x50 info, 0x51, 0xD2 e-label); replies logged as [scan].
+    # b0/b1 set the first two payload bytes (e.g. an e-label frame index); the rest stay zero.
+    - action: probe_command
+      variables:
+        addr: int
+        cmd: int
+        b0: int
+        b1: int
+      then:
+        - lambda: |-
+            if (cmd != 0x40 && cmd != 0x50 && cmd != 0x51 && cmd != 0xD2) { ESP_LOGW("scan", "probe: cmd 0x%02X not allowed", cmd); return; }
+            uint32_t can_id = (0x21u << 23) | (uint32_t(addr & 0x7F) << 16) | (uint32_t(cmd) << 8) | 0x80 | (0x1F << 2) | 0x2;
+            std::vector<uint8_t> data(8, 0);
+            data[0] = uint8_t(b0);
+            data[1] = uint8_t(b1);
+            id(scan_logging) = true;
+            id(can).send_data(can_id, true, data);
+            ESP_LOGI("scan", "probe addr %d cmd 0x%02X id %08X data %02X %02X", addr, cmd, (unsigned) can_id, data[0], data[1]);
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    on_begin:  # OTA blocks the main loop: stop the PSUs before it starts
+      then:
+        - lambda: 'id(psu1).stop_now(); id(psu2).stop_now();'
+
+preferences:
+  flash_write_interval: 5s
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  domain: !secret domain
+  reboot_timeout: 0s
+  ap: {}
+
+canbus:
+  - platform: esp32_can
+    id: can
+    tx_pin: GPIO15
+    rx_pin: GPIO16
+    can_id: 0
+    use_extended_id: true
+    bit_rate: 125kbps
+    rx_queue_len: 32
+    tx_queue_len: 16
+    on_frame:
+      - can_id: 0x10808200
+        can_id_mask: 0x1F80FF80  # proto 0x21, cmd 0x82, direction bit clear: register-read replies
+        use_extended_id: true
+        then:
+          - lambda: |-
+              if (!id(scanning) && !id(scan_logging)) return;
+              if (x.size() != 8 || (x[0] >> 4) != 0) return;
+              uint64_t v = 0;
+              for (int i = 2; i < 8; i++) v = (v << 8) | x[i];
+              ESP_LOGI("scan", "PSU%u reg %X%02X = %02X %02X %02X %02X %02X %02X  /1024=%.3f",
+                       (unsigned) ((can_id >> 16) & 0x7F), x[0] & 0x0F, x[1], x[2], x[3], x[4], x[5], x[6], x[7], v / 1024.0);
+      - can_id: 0x10800000
+        can_id_mask: 0x1F800080  # proto 0x21, direction bit clear: any reply
+        use_extended_id: true
+        then:
+          - lambda: |-
+              if (!id(scan_logging)) return;
+              uint8_t cmd = (can_id >> 8) & 0xFF;
+              if (cmd == 0x82 || cmd == 0x81) return;
+              char hex[3 * 8 + 1] = {0};
+              for (size_t i = 0; i < x.size() && i < 8; i++) sprintf(hex + 3 * i, "%02X ", x[i]);
+              ESP_LOGI("scan", "reply %08X cmd 0x%02X addr %u: %s", (unsigned) can_id, cmd, (unsigned) ((can_id >> 16) & 0x7F), hex);
+
+globals:
+  - id: scan_reg
+    type: int
+    initial_value: '0x0100'
+  - id: scan_start
+    type: int
+    initial_value: '0x0100'
+  - id: scan_end
+    type: int
+    initial_value: '0x02FF'
+  - id: scan_addr
+    type: int
+    initial_value: '1'
+  - id: scanning
+    type: bool
+    initial_value: 'false'
+  - id: scan_logging  # keep logging replies briefly after the sweep so late answers are captured
+    type: bool
+    initial_value: 'false'
+
+interval:
+  - interval: 20ms
+    then:
+      - lambda: |-
+          if (!id(scanning)) return;
+          uint16_t reg = id(scan_reg);
+          std::vector<uint8_t> data = {uint8_t(reg >> 8), uint8_t(reg & 0xFF), 0, 0, 0, 0, 0, 0};
+          id(can).send_data(0x108082FE | (uint32_t(id(scan_addr)) << 16), true, data);
+          if (++id(scan_reg) > id(scan_end)) {
+            id(scan_reg) = id(scan_start);
+            if (++id(scan_addr) > 2) {
+              id(scanning) = false;
+              id(scan_logging) = true;
+              ESP_LOGI("scan", "=== register scan done ===");
+            }
+          }
+  - interval: 30s
+    then:
+      - lambda: 'if (!id(scanning)) id(scan_logging) = false;'
+
+nasn_rectifier:
+  - id: psu1
+    canbus_id: can
+    address: 1
+    online:
+      name: PSU 1 online
+    output_voltage:
+      name: PSU 1 output voltage
+    output_voltage_0184:
+      name: PSU 1 output voltage (0x0184)
+    output_current:
+      name: PSU 1 output current
+    output_power:
+      name: PSU 1 output power
+    input_voltage:
+      name: PSU 1 AC voltage
+    input_temperature:
+      name: PSU 1 inlet temperature
+    output_temperature:
+      name: PSU 1 heatsink temperature
+    pfc_voltage:
+      name: PSU 1 PFC bus voltage
+      entity_category: diagnostic
+    voltage_setpoint:
+      name: PSU 1 voltage setpoint
+    current_setpoint:
+      name: PSU 1 current setpoint
+    alarms:
+      name: PSU 1 alarm bits
+    raw_021d: {name: PSU 1 reg 021D}
+    raw_022f: {name: PSU 1 reg 022F}
+    raw_0239: {name: PSU 1 reg 0239}
+    raw_023a: {name: PSU 1 reg 023A}
+    raw_023b: {name: PSU 1 reg 023B}
+    raw_024e: {name: PSU 1 reg 024E}
+    fan1_speed:
+      name: PSU 1 fan 1 speed
+    fan2_speed:
+      name: PSU 1 fan 2 speed
+  - id: psu2
+    canbus_id: can
+    address: 2
+    online:
+      name: PSU 2 online
+    output_voltage:
+      name: PSU 2 output voltage
+    output_voltage_0184:
+      name: PSU 2 output voltage (0x0184)
+    output_current:
+      name: PSU 2 output current
+    output_power:
+      name: PSU 2 output power
+    input_voltage:
+      name: PSU 2 AC voltage
+    input_temperature:
+      name: PSU 2 inlet temperature
+    output_temperature:
+      name: PSU 2 heatsink temperature
+    pfc_voltage:
+      name: PSU 2 PFC bus voltage
+      entity_category: diagnostic
+    voltage_setpoint:
+      name: PSU 2 voltage setpoint
+    current_setpoint:
+      name: PSU 2 current setpoint
+    alarms:
+      name: PSU 2 alarm bits
+    raw_021d: {name: PSU 2 reg 021D}
+    raw_022f: {name: PSU 2 reg 022F}
+    raw_0239: {name: PSU 2 reg 0239}
+    raw_023a: {name: PSU 2 reg 023A}
+    raw_023b: {name: PSU 2 reg 023B}
+    raw_024e: {name: PSU 2 reg 024E}
+    fan1_speed:
+      name: PSU 2 fan 1 speed
+    fan2_speed:
+      name: PSU 2 fan 2 speed
+
+mqtt:
+  broker: !secret mqtt_host
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  id: mqtt_client
+  log_topic: null
+
+number:
+  - platform: template
+    id: max_v
+    name: Max charge voltage
+    unit_of_measurement: V
+    entity_category: config
+    min_value: 48
+    max_value: 58
+    step: 0.1
+    initial_value: 57.0
+    optimistic: true
+    restore_value: true
+  - platform: template
+    id: max_a
+    name: Max charge current
+    unit_of_measurement: A
+    entity_category: config
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    optimistic: true
+    restore_value: true
+  - platform: template
+    id: fb_v
+    name: Fallback voltage
+    unit_of_measurement: V
+    entity_category: config
+    min_value: 48
+    max_value: 54.4  # FALLBACK_MAX_V: the module runs on this alone when CAN goes quiet
+    step: 0.1
+    initial_value: 54.0
+    optimistic: true
+    restore_value: true
+  - platform: template
+    id: fb_a
+    name: Fallback current (per PSU)
+    unit_of_measurement: A
+    entity_category: config
+    min_value: 0
+    max_value: 10  # FALLBACK_MAX_A
+    step: 1
+    initial_value: 5
+    optimistic: true
+    restore_value: true
+  - platform: template
+    id: cell_max_v
+    name: Max cell voltage
+    unit_of_measurement: V
+    entity_category: config
+    min_value: 3.40
+    max_value: 3.58  # CELL_LIMIT_MAX_V: below the 3.600 V BMS trip
+    step: 0.01
+    initial_value: 3.55
+    optimistic: true
+    restore_value: true
+  - platform: template
+    id: cell_resume_v
+    name: Cell resume voltage  # must stay below Max cell voltage, else both fall back to 3.55 / 3.40 V
+    unit_of_measurement: V
+    entity_category: config
+    min_value: 3.20
+    max_value: 3.55
+    step: 0.01
+    initial_value: 3.40
+    optimistic: true
+    restore_value: true
+
+switch:
+  - platform: template
+    id: pause_sw
+    name: Pause charging
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+button:
+  - platform: template
+    name: Clear fault
+    on_press:
+      - lambda: id(ctl).clear_fault();
+
+charge_controller:
+  id: ctl
+  rectifiers: [psu1, psu2]
+  max_voltage: max_v
+  max_current: max_a
+  fallback_voltage: fb_v
+  fallback_current: fb_a
+  max_cell_voltage: cell_max_v
+  cell_resume_voltage: cell_resume_v
+  pause: pause_sw
+  state:
+    name: Charger state
+  last_fault:
+    name: Last fault
+  hold_reason:
+    name: Hold reason
+  bms_charge_stage:
+    name: BMS charge stage
+  target_voltage:
+    name: Target voltage
+  target_current:
+    name: Target current
+  budget:
+    name: Current budget
+  output_power:
+    name: Charger output power
+  bms_age:
+    name: BMS data age
+  max_cell_age:
+    name: Max cell age
+    entity_category: diagnostic
+  no_current:
+    name: Charging without current

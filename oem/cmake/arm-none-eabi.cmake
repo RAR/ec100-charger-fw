@@ -1,0 +1,12 @@
+# oem/cmake/arm-none-eabi.cmake
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR arm)
+if(DEFINED ENV{ARM_TOOLCHAIN})
+  set(ARM_TOOLCHAIN "$ENV{ARM_TOOLCHAIN}")
+else()
+  set(ARM_TOOLCHAIN "$ENV{HOME}/.local/arm-gnu-toolchain-15.3.rel2")
+endif()
+set(CMAKE_C_COMPILER "${ARM_TOOLCHAIN}/bin/arm-none-eabi-gcc")
+set(CMAKE_CXX_COMPILER "${ARM_TOOLCHAIN}/bin/arm-none-eabi-g++")
+set(CMAKE_OBJCOPY "${ARM_TOOLCHAIN}/bin/arm-none-eabi-objcopy")
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)

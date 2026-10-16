@@ -1,0 +1,8 @@
+# Bridge for charger B (Waveshare ESP32-S3-RS485-CAN on its RS485 jack). Everything is in oem-bridge.yaml.
+substitutions:
+  name: eco-charger-b
+  friendly_name: Eco Charger B
+  ccl_share: "0.5"
+
+packages:
+  bridge: !include oem-bridge.yaml

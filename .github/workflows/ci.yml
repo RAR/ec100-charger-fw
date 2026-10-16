@@ -1,0 +1,109 @@
+# Host tests, tool tests and the OEM board firmware build on every push and pull request.
+# A tag vMAJOR.MINOR (e.g. v3.9) also publishes a GitHub release with the firmware image; the tag must match
+# OEM_FW_VERSION in oem/src/app/modbus_map.h.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  ARM_TOOLCHAIN_VERSION: 15.3.rel2
+  ARM_TOOLCHAIN_SHA256: 463df9665c246fa13bab2102115bbf83440661b6eb70b44f3dfd4712ca30037a
+
+jobs:
+  host-tests:
+    name: Host tests (C++)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C tests test
+
+  tools:
+    name: Tool tests (Python)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q tools
+
+  firmware:
+    name: OEM firmware
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache the Arm GNU Toolchain
+        id: toolchain-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/arm-gnu-toolchain
+          key: arm-gnu-toolchain-${{ env.ARM_TOOLCHAIN_VERSION }}-x86_64
+      - name: Download the Arm GNU Toolchain
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        run: |
+          name=arm-gnu-toolchain-$ARM_TOOLCHAIN_VERSION-x86_64-arm-none-eabi.tar.xz
+          curl -fsSL -o "$RUNNER_TEMP/$name" \
+            "https://gitlab.arm.com/api/v4/projects/tooling%2Fgnu-toolchains-for-arm/packages/generic/gnu-toolchain/$ARM_TOOLCHAIN_VERSION/$name"
+          echo "$ARM_TOOLCHAIN_SHA256  $RUNNER_TEMP/$name" | sha256sum -c -
+          mkdir -p ~/arm-gnu-toolchain
+          tar -xJf "$RUNNER_TEMP/$name" -C ~/arm-gnu-toolchain --strip-components=1
+      - name: Build
+        run: |
+          export ARM_TOOLCHAIN=~/arm-gnu-toolchain
+          "$ARM_TOOLCHAIN/bin/arm-none-eabi-gcc" --version | head -1
+          cmake -S oem -B oem/build
+          cmake --build oem/build 2>&1 | tee build.log
+          {
+            echo '### OEM firmware memory use'
+            echo '```'
+            grep -E 'FLASH:|RAM:' build.log | tail -2
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oem-firmware
+          path: |
+            oem/build/charger.dat
+            oem/build/charger.elf
+            oem/build/charger.bin
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [host-tests, tools, firmware]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the firmware version
+        run: |
+          v=$(sed -n 's/.*OEM_FW_VERSION = 0x\([0-9A-Fa-f]\{4\}\);.*/\1/p' oem/src/app/modbus_map.h)
+          want="v$((16#${v:0:2})).$((16#${v:2:2}))"
+          echo "firmware $want, tag $GITHUB_REF_NAME"
+          test "$want" = "$GITHUB_REF_NAME"
+      - uses: actions/download-artifact@v4
+        with:
+          name: oem-firmware
+          path: dist
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          mv charger.dat "charger-$GITHUB_REF_NAME.dat"
+          mv charger.elf "charger-$GITHUB_REF_NAME.elf"
+          mv charger.bin "charger-$GITHUB_REF_NAME.bin"
+          sha256sum charger-* > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "OEM firmware $GITHUB_REF_NAME" \
+            --generate-notes charger-* SHA256SUMS

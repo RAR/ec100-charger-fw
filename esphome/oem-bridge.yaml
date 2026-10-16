@@ -1,0 +1,901 @@
+# Waveshare ESP32-S3-RS485-CAN as the OEM charger's bridge (spec phase 4 and
+# docs/history/superpowers/specs/2026-10-15-oem-bridge-home-assistant-design.md).
+# Home Assistant owns the RS485 line: modbus_controller polls the charger. The "Passthrough" switch hands the line to
+# the raw TCP stream on port 8899 instead, for tools/oem_modbus.py and tools/oem_update.py (--bridge), which flip it
+# themselves over the web server (basic auth). It turns itself off after 10 min without a TCP client, and turning it
+# off puts the line back to 9600. CAN is not used: the OEM board owns the module bus.
+# Shared by eco-charger-a.yaml and eco-charger-b.yaml (one bridge per charger), which set the name.
+substitutions:
+  name: oem-bridge
+  friendly_name: OEM Bridge
+  yambms_prefix: yambms/yambms_1
+  # This charger's share of YamBMS's bank charge current limit (the other charger takes the rest).
+  ccl_share: "1.0"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: github://oxan/esphome-stream-server
+    components: [stream_server]
+  - source:
+      type: local
+      path: components
+    components: [rs485_mux]
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  domain: !secret domain
+  ap: {}
+
+mqtt:
+  broker: !secret mqtt_host
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  id: mqtt_client
+  log_topic: null
+
+# The tools switch Passthrough and the baud here: POST /switch/Passthrough/turn_on, /select/RS485%20baud/set?option=...
+web_server:
+  port: 80
+  version: 3
+  auth:
+    type: basic
+    username: !secret web_username
+    password: !secret web_password
+
+uart:
+  - id: rs485
+    tx_pin: GPIO17
+    rx_pin: GPIO18
+    flow_control_pin: GPIO21  # the transceiver's direction enable (RS485 half-duplex mode)
+    baud_rate: 9600
+    rx_buffer_size: 1024
+
+rs485_mux:
+  id: mux
+  uart_id: rs485
+  modbus_port:
+    id: mux_modbus
+  passthrough_port:
+    id: mux_stream
+  idle_timeout: 10min
+
+stream_server:
+  uart_id: mux_stream
+  port: 8899
+  buffer_size: 1024
+
+modbus:
+  id: modbus_bus
+  uart_id: mux_modbus
+
+modbus_controller:
+  - id: charger
+    modbus_id: modbus_bus
+    address: 0x1
+    update_interval: 5s
+    offline_skip_updates: 2
+
+script:
+  - id: passthrough_off
+    then:
+      - select.set:
+          id: rs485_baud
+          option: "9600"
+      - lambda: id(mux).set_passthrough(false);
+      - component.resume: charger
+
+switch:
+  - platform: template
+    id: passthrough
+    name: Passthrough
+    icon: mdi:lan-connect
+    restore_mode: ALWAYS_OFF
+    lambda: return id(mux).passthrough();
+    turn_on_action:
+      - component.suspend: charger
+      - lambda: id(mux).set_passthrough(true);
+    turn_off_action:
+      - script.execute: passthrough_off
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Pause
+    register_type: holding
+    address: 110
+    bitmask: 1
+    icon: mdi:pause-circle
+
+interval:
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: return id(mux).idle_expired();
+          then:
+            - logger.log: "Passthrough idle for the timeout: back to Modbus polling"
+            - script.execute: passthrough_off
+  # YamBMS's limits for Source mode Modbus (firmware 3.6), and its SOC for the Panel display (3.5): one FC 16 of
+  # HR 100-107 (heartbeat first) every 5 s while the line is Modbus's, CVL and CCL have both arrived within 60 s and
+  # charging_allowed has been seen at all. YamBMS publishes binary sensors only on change (retained), so
+  # charging_allowed carries its last value and CVL/CCL carry the freshness. Otherwise nothing is written, and the
+  # charger falls back (E15) 10 s after the last one.
+  # CCL is the bank's: each charger gets ccl_share of it. Bank current isn't sent (HR 107 unknown): it includes the
+  # other charger and the inverter.
+  - interval: 5s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              const uint32_t now = millis();
+              auto recent = [&](uint32_t t) { return t != 0 && now - t < 60000; };
+              return !id(mux).passthrough() && recent(id(yambms_cvl_ms)) && recent(id(yambms_ccl_ms)) &&
+                     id(yambms_allowed).has_state() && !std::isnan(id(yambms_cvl).state) &&
+                     !std::isnan(id(yambms_ccl).state);
+          then:
+            - lambda: |-
+                auto u16 = [](float x, float scale, uint16_t unknown) -> uint16_t {
+                  if (std::isnan(x) || x < 0) return unknown;
+                  const float v = x * scale;
+                  return v >= 65535.0f ? 65535 : uint16_t(std::lround(v));
+                };
+                const float soc = id(yambms_soc).state;
+                const float share = ${ccl_share};
+                const bool allowed = id(yambms_allowed).state == "ON";
+                const bool alarm = !std::isnan(id(yambms_alarm_bits).state) && id(yambms_alarm_bits).state != 0;
+                const bool blocking = !std::isnan(id(yambms_blocking).state) && id(yambms_blocking).state > 0;
+                std::vector<uint16_t> regs = {
+                    1,
+                    u16(id(yambms_cvl).state, 100.0f, 0),
+                    u16(id(yambms_ccl).state * share, 10.0f, 0),
+                    uint16_t((allowed ? 1 : 0) | (alarm ? 2 : 0) | (blocking ? 4 : 0)),
+                    std::isnan(soc) ? uint16_t(0xFFFF) : uint16_t(soc < 0 ? 0 : soc > 100 ? 100 : std::lround(soc)),
+                    u16(id(yambms_v).state, 100.0f, 0),
+                    u16(id(yambms_max_cell).state, 1000.0f, 0),
+                    0x7FFF,
+                };
+                auto cmd = modbus_controller::ModbusCommandItem::create_write_multiple_command(id(charger), 100,
+                                                                                              regs.size(), regs);
+                id(charger)->queue_command(cmd);
+
+select:
+  - platform: template
+    id: rs485_baud
+    name: RS485 baud
+    options: ["9600", "19200", "38400", "115200", "460800"]
+    initial_option: "9600"
+    optimistic: true
+    set_action:
+      - lambda: |-
+          int baud = atoi(x.c_str());
+          if (baud != 9600 && !id(mux).passthrough()) {
+            ESP_LOGW("rs485", "Baud %d is only for Passthrough; staying at 9600 for Modbus polling", baud);
+            baud = 9600;
+          }
+          id(rs485).set_baud_rate(baud);
+          id(rs485).load_settings(false);
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Source mode
+    address: 6
+    value_type: U_WORD
+    skip_updates: 5
+    entity_category: config
+    # The polled modes (Pylontech, EG4, JK, JK-PB) are menu-only: the board refuses them here (they would cut this link).
+    optionsmap:
+      "Panel": 0
+      "Pylontech": 1
+      "Modbus": 2
+      "EG4": 3
+      "JK": 4
+      "JK-PB": 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Relay mode
+    address: 10
+    value_type: U_WORD
+    skip_updates: 5
+    entity_category: config
+    optionsmap:
+      "Auto": 0
+      "Off": 1
+      "Modbus": 2
+
+# When CVL and CCL last arrived over MQTT: the relay only writes while both are recent.
+globals:
+  - id: yambms_cvl_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: yambms_ccl_ms
+    type: uint32_t
+    initial_value: "0"
+
+sensor:
+  - platform: mqtt_subscribe
+    id: yambms_soc
+    topic: ${yambms_prefix}/sensor/battery_soc/state
+    name: YamBMS SOC
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+  - platform: mqtt_subscribe
+    id: yambms_cvl
+    topic: ${yambms_prefix}/sensor/requested_charge_voltage/state
+    name: YamBMS CVL
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    on_value:
+      - lambda: id(yambms_cvl_ms) = millis();
+  - platform: mqtt_subscribe
+    id: yambms_ccl
+    topic: ${yambms_prefix}/sensor/requested_charge_current/state
+    name: YamBMS CCL
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    on_value:
+      - lambda: id(yambms_ccl_ms) = millis();
+  - platform: mqtt_subscribe
+    id: yambms_alarm_bits
+    topic: ${yambms_prefix}/sensor/errors_bitmask_alarm/state
+    internal: true
+  - platform: mqtt_subscribe
+    id: yambms_blocking
+    topic: ${yambms_prefix}/sensor/bms_blocking_charge/state
+    internal: true
+  - platform: mqtt_subscribe
+    id: yambms_v
+    topic: ${yambms_prefix}/sensor/total_voltage/state
+    internal: true
+  - platform: mqtt_subscribe
+    id: yambms_max_cell
+    topic: ${yambms_prefix}/sensor/max_cell_voltage/state
+    internal: true
+  - platform: wifi_signal
+    name: WiFi signal
+    update_interval: 60s
+  - platform: uptime
+    name: Uptime
+  # --- status, IR 0-17 ---
+  # One request for IR 0-39: 2026.9 derives each entity's width from value_type (register_count is gone), and
+  # reuse_previous_range: true on the entity after each gap in the used addresses (6, 14, 20, 25, 28, 35, 38) spans it.
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    id: ir_version
+    internal: true
+    register_type: read
+    address: 0
+    value_type: U_WORD
+    on_value:
+      - lambda: |-
+          char s[8];
+          snprintf(s, sizeof(s), "%u.%u", (unsigned) x >> 8, (unsigned) x & 0xFF);
+          id(fw_version).publish_state(s);
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    id: ir_state
+    internal: true
+    register_type: read
+    address: 1
+    value_type: U_WORD
+    on_value:
+      - lambda: |-
+          static const char *const N[] = {"BOOT", "WAIT_BMS", "CHARGING", "HOLD", "FAULT"};
+          id(state_text).publish_state(x < 5 ? N[(int) x] : "unknown");
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    id: ir_hold
+    internal: true
+    register_type: read
+    address: 2
+    value_type: U_WORD
+    on_value:
+      - lambda: |-
+          static const char *const N[] = {"none", "paused", "not allowed", "BMS alarm", "BMS blocking",
+                                          "cell high", "budget < 2 A", "waiting for start"};
+          id(hold_text).publish_state(x < 8 ? N[(int) x] : "unknown");
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    id: ir_error
+    internal: true
+    register_type: read
+    address: 3
+    value_type: U_WORD
+    on_value:
+      - lambda: |-
+          const int e = (int) x;
+          const char *what = e == 0 ? "none" : e <= 11 ? "module alarm" : e == 12 ? "BMS alarm"
+                           : e == 13 ? "setpoint mismatch" : e == 14 ? "output overvoltage"
+                           : e == 15 ? "source stale (warning)" : e == 16 ? "charging without current (warning)"
+                           : e == 17 ? "battery reading implausible" : "unknown";
+          char s[48];
+          if (e == 0) snprintf(s, sizeof(s), "none");
+          else snprintf(s, sizeof(s), "E%d %s", e, what);
+          id(error_text).publish_state(s);
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Target voltage
+    register_type: read
+    address: 6
+    reuse_previous_range: true
+    value_type: U_WORD
+    unit_of_measurement: V
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.01f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Target current
+    register_type: read
+    address: 7
+    value_type: U_WORD
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Current budget
+    register_type: read
+    address: 8
+    value_type: U_WORD
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Output current
+    register_type: read
+    address: 9
+    value_type: U_WORD
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Output power
+    register_type: read
+    address: 10
+    value_type: U_WORD
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    filters:
+      - lambda: "return x == 65535 ? NAN : x;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Battery voltage
+    register_type: read
+    address: 11
+    value_type: U_WORD
+    unit_of_measurement: V
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.01f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Battery voltage ADC
+    register_type: read
+    address: 12
+    value_type: U_WORD
+    unit_of_measurement: V
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    entity_category: diagnostic
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.01f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: CVL in use
+    register_type: read
+    address: 14
+    reuse_previous_range: true
+    value_type: U_WORD
+    unit_of_measurement: V
+    device_class: voltage
+    accuracy_decimals: 2
+    entity_category: diagnostic
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.01f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: CCL in use
+    register_type: read
+    address: 15
+    value_type: U_WORD
+    unit_of_measurement: A
+    device_class: current
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Charger uptime
+    register_type: read
+    address: 16
+    value_type: U_DWORD
+    unit_of_measurement: s
+    device_class: duration
+    accuracy_decimals: 0
+    entity_category: diagnostic
+  # --- per module: PSU1 at IR 20, PSU2 at IR 30 ---
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU1 voltage
+    register_type: read
+    address: 21
+    value_type: U_WORD
+    unit_of_measurement: V
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.01f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU1 current
+    register_type: read
+    address: 22
+    value_type: U_WORD
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU1 AC voltage
+    register_type: read
+    address: 23
+    value_type: U_WORD
+    unit_of_measurement: V
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU1 heatsink
+    register_type: read
+    address: 25
+    reuse_previous_range: true
+    value_type: S_WORD
+    unit_of_measurement: °C
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - lambda: "return x == 32767 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU2 voltage
+    register_type: read
+    address: 31
+    value_type: U_WORD
+    unit_of_measurement: V
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.01f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU2 current
+    register_type: read
+    address: 32
+    value_type: U_WORD
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU2 AC voltage
+    register_type: read
+    address: 33
+    value_type: U_WORD
+    unit_of_measurement: V
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - lambda: "return x == 65535 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU2 heatsink
+    register_type: read
+    address: 35
+    reuse_previous_range: true
+    value_type: S_WORD
+    unit_of_measurement: °C
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - lambda: "return x == 32767 ? NAN : x * 0.1f;"
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Modbus address
+    register_type: holding
+    address: 7
+    value_type: U_WORD
+    skip_updates: 5
+    accuracy_decimals: 0
+    entity_category: diagnostic
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Modbus baud code
+    register_type: holding
+    address: 8
+    value_type: U_WORD
+    skip_updates: 5
+    accuracy_decimals: 0
+    entity_category: diagnostic
+
+text_sensor:
+  # binary_sensor has no mqtt_subscribe platform, so charging_allowed arrives as "ON"/"OFF" text.
+  - platform: mqtt_subscribe
+    id: yambms_allowed
+    topic: ${yambms_prefix}/binary_sensor/charging_allowed/state
+    name: YamBMS charging allowed
+    entity_category: diagnostic
+  - platform: template
+    id: fw_version
+    name: Charger firmware
+    entity_category: diagnostic
+  - platform: template
+    id: state_text
+    name: Charger state
+  - platform: template
+    id: hold_text
+    name: Hold reason
+  - platform: template
+    id: error_text
+    name: Error
+  # The alarm word as exact hex text (a U_DWORD sensor goes through float and loses bits above 23).
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU1 alarm word
+    entity_category: diagnostic
+    register_type: read
+    address: 28
+    reuse_previous_range: true
+    response_size: 4
+    raw_encode: HEXBYTES
+    filters:
+      - lambda: |-
+          if (x == "ffffffff") return std::string("n/a");
+          for (auto &c : x) c = toupper(c);
+          return x;
+  # The alarm word as exact hex text (a U_DWORD sensor goes through float and loses bits above 23).
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU2 alarm word
+    entity_category: diagnostic
+    register_type: read
+    address: 38
+    reuse_previous_range: true
+    response_size: 4
+    raw_encode: HEXBYTES
+    filters:
+      - lambda: |-
+          if (x == "ffffffff") return std::string("n/a");
+          for (auto &c : x) c = toupper(c);
+          return x;
+
+binary_sensor:
+  - platform: stream_server
+    connected:
+      name: Bridge client connected
+      on_state:
+        - lambda: id(mux).set_client_connected(x);
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Cooling
+    register_type: read
+    address: 4
+    bitmask: 0x1
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: No-current warning
+    register_type: read
+    address: 4
+    bitmask: 0x2
+    device_class: problem
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Session active
+    register_type: read
+    address: 4
+    bitmask: 0x8
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Relay closed
+    register_type: read
+    address: 4
+    bitmask: 0x10
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: AC present
+    register_type: read
+    address: 4
+    bitmask: 0x20
+    device_class: power
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Diagnostic override
+    register_type: read
+    address: 4
+    bitmask: 0x100
+    entity_category: diagnostic
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU1 online
+    register_type: read
+    address: 20
+    reuse_previous_range: true
+    bitmask: 0x1
+    device_class: connectivity
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU1 faulted
+    register_type: read
+    address: 20
+    reuse_previous_range: true
+    bitmask: 0x2
+    device_class: problem
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU1 cooling
+    register_type: read
+    address: 20
+    reuse_previous_range: true
+    bitmask: 0x4
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU1 standby
+    register_type: read
+    address: 20
+    reuse_previous_range: true
+    bitmask: 0x8
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU2 online
+    register_type: read
+    address: 30
+    bitmask: 0x1
+    device_class: connectivity
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU2 faulted
+    register_type: read
+    address: 30
+    bitmask: 0x2
+    device_class: problem
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU2 cooling
+    register_type: read
+    address: 30
+    bitmask: 0x4
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: PSU2 standby
+    register_type: read
+    address: 30
+    bitmask: 0x8
+
+number:
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Max current
+    address: 0
+    value_type: U_WORD
+    min_value: 2
+    max_value: 100
+    step: 1
+    unit_of_measurement: A
+    mode: box
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Charge voltage
+    address: 1
+    value_type: U_WORD
+    multiply: 100
+    min_value: 47.0
+    max_value: 57.8
+    step: 0.01
+    unit_of_measurement: V
+    mode: box
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Start SOC
+    address: 2
+    value_type: U_WORD
+    min_value: 0
+    max_value: 99
+    step: 1
+    unit_of_measurement: "%"
+    mode: box
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Stop SOC
+    address: 3
+    value_type: U_WORD
+    min_value: 1
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: box
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Start voltage
+    address: 4
+    value_type: U_WORD
+    multiply: 100
+    min_value: 42.0
+    max_value: 52.8
+    step: 0.01
+    unit_of_measurement: V
+    mode: box
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Stop voltage
+    address: 5
+    value_type: U_WORD
+    multiply: 100
+    min_value: 47.0
+    max_value: 57.8
+    step: 0.01
+    unit_of_measurement: V
+    mode: box
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Fallback current
+    address: 9
+    value_type: U_WORD
+    min_value: 0
+    max_value: 20
+    step: 1
+    unit_of_measurement: A
+    mode: box
+    entity_category: config
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Backlight timeout
+    address: 11
+    value_type: U_WORD
+    min_value: 0
+    max_value: 3600
+    step: 1
+    unit_of_measurement: s
+    mode: box
+    entity_category: config
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Max cell voltage
+    address: 12
+    value_type: U_WORD
+    multiply: 1000
+    min_value: 3.4
+    max_value: 3.58
+    step: 0.001
+    unit_of_measurement: V
+    mode: box
+    entity_category: config
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Cell resume voltage
+    address: 13
+    value_type: U_WORD
+    multiply: 1000
+    min_value: 3.2
+    max_value: 3.55
+    step: 0.001
+    unit_of_measurement: V
+    mode: box
+    entity_category: config
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: ADC trim
+    address: 14
+    value_type: S_WORD
+    min_value: -50
+    max_value: 50
+    step: 1
+    unit_of_measurement: "‰"
+    mode: box
+    entity_category: config
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Module fallback voltage
+    address: 15
+    value_type: U_WORD
+    multiply: 100
+    min_value: 48.0
+    max_value: 54.4
+    step: 0.01
+    unit_of_measurement: V
+    mode: box
+    entity_category: config
+    skip_updates: 5
+  - platform: modbus_controller
+    modbus_controller_id: charger
+    name: Module fallback current
+    address: 16
+    value_type: U_WORD
+    min_value: 0
+    max_value: 10
+    step: 1
+    unit_of_measurement: A
+    mode: box
+    entity_category: config
+    skip_updates: 5
+
+button:
+  - platform: template
+    name: Charge now
+    icon: mdi:battery-charging
+    on_press:
+      - lambda: |-
+          auto cmd = modbus_controller::ModbusCommandItem::create_write_single_command(id(charger), 113, 1);
+          id(charger)->queue_command(cmd);
+  - platform: template
+    name: Clear fault
+    icon: mdi:alert-remove
+    on_press:
+      - lambda: |-
+          auto cmd = modbus_controller::ModbusCommandItem::create_write_single_command(id(charger), 111, 1);
+          id(charger)->queue_command(cmd);

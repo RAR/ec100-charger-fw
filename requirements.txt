@@ -1,0 +1,6 @@
+# Python packages for tools/ (bench tools, simulators, the OEM update/Modbus clients) and their tests.
+pytest>=8
+pyserial>=3.5
+python-can>=4.4
+pyusb>=1.2
+gs-usb>=0.3
