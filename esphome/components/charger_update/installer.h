@@ -11,6 +11,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 namespace charger_update_logic {
@@ -20,7 +21,10 @@ constexpr uint32_t MODBUS_BAUD = 9600, BOOT_BAUD = 460800;
 constexpr uint16_t IR_VERSION = 0, HR_REBOOT = 120, REBOOT_MAGIC = 0xB007;
 constexpr uint16_t STATE_CHARGING = 2;  // IR 1
 constexpr size_t MAX_IMAGE = 0x19000;   // the bootloader's app area (tools/oem_image.py MAX_LEN)
-constexpr size_t FRAME_BYTES = 256;
+// 64 data bytes, 73 on the line: a whole frame fits the ESP32's 128-byte UART TX FIFO in one write. The bootloader
+// ends a frame at an idle line, so a 265-byte frame whose FIFO refill came late (WiFi and web traffic) arrived as two
+// CRC-bad halves and was never acked (seen on charger B, 2026-10-16). Any multiple of 8 up to 256 is accepted.
+constexpr size_t FRAME_BYTES = 64;
 constexpr uint32_t SETTLE_MS = 300;          // a poll in flight when the line was taken finishes meanwhile
 constexpr uint32_t MODBUS_REPLY_MS = 500;
 constexpr uint32_t WAIT_REBOOTED_MS = 30000;  // the charger acked HR 120
@@ -106,6 +110,8 @@ class Installer {
   Phase phase() const { return phase_; }
   Outcome outcome() const { return outcome_; }
   const char *error() const { return error_; }
+  // For the log after a failure in the frames: which frame, and what came back.
+  const char *detail() const { return detail_; }
   // What the charger reported before the reboot (-1 when it didn't answer).
   int version() const { return version_; }
   int charger_state() const { return state_; }
@@ -119,6 +125,13 @@ class Installer {
     phase_ = p;
     since_ = now;
     got_ = 0;
+  }
+
+  void note_(uint16_t seq, size_t got) {
+    int k = std::snprintf(detail_, sizeof detail_, "frame %u of %u, %u bytes back:", unsigned(seq), unsigned(frames_),
+                          unsigned(got));
+    for (size_t i = 0; i < got && i < 8 && k > 0 && size_t(k) < sizeof detail_ - 4; i++)
+      k += std::snprintf(detail_ + k, sizeof detail_ - size_t(k), " %02X", rx_[i]);
   }
 
   void finish_(Outcome o, const char *error) {
@@ -331,6 +344,7 @@ class Installer {
       uint8_t want[5] = {0xFB, 0x03, 0x00, uint8_t(seq_ >> 8), uint8_t(seq_)};
       const bool ok = std::memcmp(rx_, want, 5) == 0 && crc16_modbus(rx_, 5) == uint16_t(rx_[5] | rx_[6] << 8);
       if (!ok) {
+        note_(seq_, got_);
         finish_(Outcome::FAILED_AFTER_HEADER,
                 "the charger's bootloader answered a frame wrongly; power-cycle the charger, then install again");
         return;
@@ -344,6 +358,7 @@ class Installer {
       return;
     }
     if (now - since_ >= (phase_ == Phase::HEADER ? HEADER_ACK_MS : DATA_ACK_MS)) {
+      note_(seq_, got_);
       finish_(Outcome::FAILED_AFTER_HEADER,
               "no answer from the charger's bootloader to a frame; power-cycle the charger, then install again");
     }
@@ -358,6 +373,7 @@ class Installer {
   uint8_t rx_[16] = {};
   size_t got_ = 0;
   uint8_t tx_[9 + FRAME_BYTES] = {};
+  char detail_[96] = {};
   size_t tx_len_ = 0, echo_skip_ = 0, echo_pos_ = 0;
   bool bad_echo_ = false;
   bool echo_ = false, rebooted_ = false, hs_sent_ = false;

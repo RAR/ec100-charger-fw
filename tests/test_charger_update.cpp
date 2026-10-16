@@ -179,7 +179,7 @@ void test_installs_and_programs_the_image() {
   CHECK(ins.version() == 0x030B && ins.charger_state() == 3 && ins.rebooted());
   CHECK(c.length == 37400 && c.offset == 37400);
   CHECK(std::memcmp(c.flash.data(), dat.data(), dat.size()) == 0);
-  CHECK(ins.frames_done() == ins.frames_total() && ins.frames_total() == 147);
+  CHECK(ins.frames_done() == ins.frames_total() && ins.frames_total() == 585);  // 37400 / 64, rounded up
   CHECK(ins.progress() > 99.9f);
   CHECK(!c.bauds.empty() && c.bauds.back() == 9600);  // the line goes back to Modbus
   CHECK(t > 1000 + QUIET_MS);                        // waited for the standby second and the quiet
@@ -249,7 +249,7 @@ void test_bad_ack_crc_aborts_without_resending() {
     ins.start(dat.data(), dat.size(), 0);
     run(ins, c);
     CHECK(ins.outcome() == Outcome::FAILED_AFTER_HEADER);
-    CHECK(c.offset == size_t(seq) * 256);  // the header's: nothing sent; frame 1's: programmed once
+    CHECK(c.offset == size_t(seq) * FRAME_BYTES);  // the header's: nothing sent; frame 1's: programmed once
   }
 }
 
@@ -286,7 +286,7 @@ void test_lost_ack_aborts_without_resending() {
   run(ins, c);
   CHECK(ins.outcome() == Outcome::FAILED_AFTER_HEADER);
   CHECK(std::strstr(ins.error(), "power-cycle") != nullptr);
-  CHECK(c.offset == 512);  // frames 1 and 2 programmed once; frame 2 never sent again
+  CHECK(c.offset == 2 * FRAME_BYTES);  // frames 1 and 2 programmed once; frame 2 never sent again
   CHECK(c.bauds.back() == 9600);
 }
 
@@ -297,7 +297,7 @@ void test_wrong_sequence_ack_aborts() {
   Installer ins;
   ins.start(dat.data(), dat.size(), 0);
   run(ins, c);
-  CHECK(ins.outcome() == Outcome::FAILED_AFTER_HEADER && c.offset == 256);
+  CHECK(ins.outcome() == Outcome::FAILED_AFTER_HEADER && c.offset == FRAME_BYTES);
 }
 
 void test_echoing_adapter_is_compensated() {
@@ -326,7 +326,19 @@ void test_slow_acks_within_three_seconds_are_fine() {
   Installer ins;
   ins.start(dat.data(), dat.size(), 0);
   run(ins, c);
-  CHECK(ins.outcome() == Outcome::FAILED_AFTER_HEADER && c.offset == 256);
+  CHECK(ins.outcome() == Outcome::FAILED_AFTER_HEADER && c.offset == FRAME_BYTES);
+}
+
+void test_frames_fit_the_uart_fifo_and_failures_say_which() {
+  FakeCharger c;
+  c.drop_ack_seq = 3;
+  const auto dat = image(1024);
+  Installer ins;
+  ins.start(dat.data(), dat.size(), 0);
+  run(ins, c);
+  CHECK(9 + FRAME_BYTES <= 128);  // one write fills the ESP32's TX FIFO: no refill gap inside a frame
+  CHECK(ins.outcome() == Outcome::FAILED_AFTER_HEADER);
+  CHECK(std::strncmp(ins.detail(), "frame 3 of 16, 0 bytes back:", 29) == 0);
 }
 
 void test_bad_images_are_refused_before_anything_is_sent() {
@@ -356,6 +368,7 @@ int main() {
   test_wrong_sequence_ack_aborts();
   test_echoing_adapter_is_compensated();
   test_slow_acks_within_three_seconds_are_fine();
+  test_frames_fit_the_uart_fifo_and_failures_say_which();
   test_bad_images_are_refused_before_anything_is_sent();
   return test_result("test_charger_update");
 }

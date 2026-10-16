@@ -32,6 +32,9 @@ BAUD = 460800
 HANDSHAKE = bytes.fromhex("F945F95323")
 HANDSHAKE_REPLY = bytes.fromhex("F9450300219D")
 FRAME_BYTES = 256
+# Through the WiFi bridge: a 73-byte frame fits the ESP32's 128-byte UART TX FIFO, so no refill gap splits it (the
+# bootloader ends a frame at an idle line, and a split frame is never acked).
+BRIDGE_FRAME_BYTES = 64
 HEADER_ACK_S = 5.0  # erasing 100 pages
 DATA_ACK_S = 3.0  # a WiFi bridge has delayed an ack past 1 s (frame 187 of 192)
 QUIET_S = 2.0  # > 1.5 s of silence makes the bootloader jump to the app
@@ -181,8 +184,9 @@ def main(argv=None, sleep=time.sleep):
     where.add_argument("--bridge", metavar="HOST",
                        help="install through the WiFi bridge (esphome/oem-bridge.yaml), switching its baud as needed")
     ap.add_argument("--wait", type=float, default=30.0, help="seconds to keep trying the handshake")
-    ap.add_argument("--frame-bytes", type=frame_size, default=FRAME_BYTES,
-                    help="data bytes per frame; try 64 if the first frame fails with a small-FIFO adapter")
+    ap.add_argument("--frame-bytes", type=frame_size, default=None,
+                    help=f"data bytes per frame (default {FRAME_BYTES}, or {BRIDGE_FRAME_BYTES} with --bridge); "
+                         "try 64 if the first frame fails with a small-FIFO adapter")
     ap.add_argument("--modbus-reboot", action="store_true",
                     help="first ask the running app over Modbus to reset into the bootloader")
     ap.add_argument("--modbus-baud", type=int, default=9600)
@@ -191,6 +195,8 @@ def main(argv=None, sleep=time.sleep):
     if a.bridge:
         a.bridge = resolve_bridge(a.bridge)
     name = bridge_url(a.bridge) if a.bridge else a.port
+    if a.frame_bytes is None:
+        a.frame_bytes = BRIDGE_FRAME_BYTES if a.bridge else FRAME_BYTES
     dat = open(a.image, "rb").read()
     try:
         if a.bridge:

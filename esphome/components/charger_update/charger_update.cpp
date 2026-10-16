@@ -287,6 +287,7 @@ void ChargerUpdate::end_install_() {
   }
   const char *e = this->installer_.error() != nullptr ? this->installer_.error() : "install failed";
   if (o == Outcome::FAILED_AFTER_HEADER) {
+    if (this->installer_.detail()[0] != '\0') ESP_LOGE(TAG, "Bootloader: %s", this->installer_.detail());
     this->fail_(e);
   } else {
     this->refuse_(e);  // the charger's app is untouched

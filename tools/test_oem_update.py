@@ -275,6 +275,7 @@ def test_bridge_switches_baud_around_the_install(monkeypatch, tmp_path):
 
     def fail_install(port, dat, **kw):
         events.append(("install", kw["rebooted"]))
+        assert kw["frame_bytes"] == ou.BRIDGE_FRAME_BYTES  # 73 bytes on the line: one ESP32 UART FIFO
         raise ou.UpdateError("boom")
     monkeypatch.setattr(ou, "install", fail_install)
     img = tmp_path / "a.dat"
