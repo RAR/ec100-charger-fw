@@ -116,6 +116,7 @@ void ChargerUpdate::apply_manifest_(Manifest *m) {
     return;
   }
   this->status_clear_warning();
+  ESP_LOGI(TAG, "Latest charger release on GitHub: %s", m->version.c_str());
   this->update_info_.latest_version = m->version;
   this->update_info_.firmware_url =
       "https://github.com/" + this->repo_ + "/releases/download/v" + m->version + "/" + m->file;

@@ -37,9 +37,9 @@ For an update, the tool sets the bridge to 9600 for the Modbus reboot, then 4608
 ## Charger firmware updates from Home Assistant
 
 The bridge shows the charger's firmware as an update entity, **Charger firmware update** (the `charger_update`
-component). Every 6 hours, and when you press "check for updates", it reads the latest release's `manifest.json` from
-GitHub (`RAR/ec100-charger-fw` by default; set `repo:` for a fork). When the release is newer than the charger's
-version, Home Assistant offers it.
+component). Shortly after the bridge starts, every 6 hours, and when you press the **Check charger firmware** button,
+it reads the latest release's `manifest.json` from GitHub (`RAR/ec100-charger-fw` by default; set `repo:` for a
+fork). When the release is newer than the charger's version, Home Assistant offers it.
 
 **Install** (only ever when you press it):
 1. The bridge downloads the release's `.dat` and checks its size and SHA-256 against the manifest.
