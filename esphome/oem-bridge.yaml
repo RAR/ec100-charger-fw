@@ -28,7 +28,7 @@ external_components:
   - source:
       type: local
       path: components
-    components: [rs485_mux]
+    components: [rs485_mux, charger_update]
 
 logger:
   level: INFO
@@ -81,6 +81,23 @@ rs485_mux:
     id: mux_stream
   idle_timeout: 10min
 
+# For charger_update: GitHub's release downloads redirect to a URL of about 900 characters.
+http_request:
+  id: http
+  buffer_size_rx: 2048
+  buffer_size_tx: 2048
+  timeout: 15s
+
+# The charger's firmware from GitHub releases; Install refuses while the charger is charging
+# (docs/history/superpowers/specs/2026-10-16-bridge-charger-update-design.md).
+update:
+  - platform: charger_update
+    name: Charger firmware update
+    mux_id: mux
+    uart_id: rs485
+    modbus_controller_id: charger
+    version_sensor: fw_version
+
 stream_server:
   uart_id: mux_stream
   port: 8899
@@ -98,13 +115,19 @@ modbus_controller:
     offline_skip_updates: 2
 
 script:
+  # Neither this nor the Passthrough switch nor the baud select touch the line while charger_update installs
+  # (mux exclusive); the install gives it back at 9600 itself.
   - id: passthrough_off
     then:
-      - select.set:
-          id: rs485_baud
-          option: "9600"
-      - lambda: id(mux).set_passthrough(false);
-      - component.resume: charger
+      - if:
+          condition:
+            lambda: return !id(mux).exclusive();
+          then:
+            - select.set:
+                id: rs485_baud
+                option: "9600"
+            - lambda: id(mux).set_passthrough(false);
+            - component.resume: charger
 
 switch:
   - platform: template
@@ -114,8 +137,16 @@ switch:
     restore_mode: ALWAYS_OFF
     lambda: return id(mux).passthrough();
     turn_on_action:
-      - component.suspend: charger
-      - lambda: id(mux).set_passthrough(true);
+      - if:
+          condition:
+            lambda: return id(mux).exclusive();
+          then:
+            - logger.log:
+                level: WARN
+                format: "Passthrough refused: a charger firmware install has the line"
+          else:
+            - component.suspend: charger
+            - lambda: id(mux).set_passthrough(true);
     turn_off_action:
       - script.execute: passthrough_off
   - platform: modbus_controller
@@ -149,7 +180,7 @@ interval:
             lambda: |-
               const uint32_t now = millis();
               auto recent = [&](uint32_t t) { return t != 0 && now - t < 60000; };
-              return !id(mux).passthrough() && recent(id(yambms_cvl_ms)) && recent(id(yambms_ccl_ms)) &&
+              return !id(mux).passthrough() && !id(mux).exclusive() && recent(id(yambms_cvl_ms)) && recent(id(yambms_ccl_ms)) &&
                      id(yambms_allowed).has_state() && !std::isnan(id(yambms_cvl).state) &&
                      !std::isnan(id(yambms_ccl).state);
           then:
@@ -187,6 +218,10 @@ select:
     optimistic: true
     set_action:
       - lambda: |-
+          if (id(mux).exclusive()) {
+            ESP_LOGW("rs485", "Baud change refused: a charger firmware install has the line");
+            return;
+          }
           int baud = atoi(x.c_str());
           if (baud != 9600 && !id(mux).passthrough()) {
             ESP_LOGW("rs485", "Baud %d is only for Passthrough; staying at 9600 for Modbus polling", baud);

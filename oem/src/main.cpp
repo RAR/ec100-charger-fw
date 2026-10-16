@@ -149,7 +149,7 @@ int main() {
   const bool rs485 = hw::rs485_init(active ? active->baud() : mb_baud);
   g_mb_rx.set_gap_ms(modbus_gap_ms(mb_baud));
   if (active) active->reset();
-  bool mb_was_busy = false, mb_reboot = false;
+  bool mb_was_busy = false;
   uint32_t mb_tx_start = 0;
 
   Status st;
@@ -182,7 +182,8 @@ int main() {
     }
     if (can) g_txq.pump(hw::can_send);
 
-    // Up + Down restart: the modules have been in standby for RESTART_STANDBY_MS and nothing is left to send.
+    // Restart (Up + Down, or HR 120 over Modbus): the modules have been in standby for RESTART_STANDBY_MS and nothing
+    // is left to send, the Modbus reply included. The bootloader's 1.5 s window follows (oem_update.py --modbus-reboot).
     if (restarting) {
       const uint32_t held = now - restart_ms;
       if ((held >= RESTART_STANDBY_MS && g_txq.size() == 0 && !hw::rs485_tx_busy()) || held >= RESTART_MAX_MS) {
@@ -222,7 +223,7 @@ int main() {
     // Spec §6: the RS485 role follows HR 6 (the menu changes it), switched only while nothing is going out and no
     // Modbus reboot is pending (that reboot comes up in the new role).
     PolledSource *const want = poller_for(settings);
-    if (want != active && !hw::rs485_tx_busy() && !mb_reboot) {
+    if (want != active && !hw::rs485_tx_busy() && !restarting) {
       if (!rs485 || set_line_baud(want ? want->baud() : modbus_baud(settings))) {  // else retried next pass
         if (want) {
           want->reset();  // stale until the BMS answers at the new role
@@ -290,13 +291,8 @@ int main() {
         mb_was_busy = busy;
 
         if (!busy) {
-          // M8: line changes (by Modbus or the menu) and a reboot wait until no reply is going out. The address is
-          // read per frame, so it needs nothing here.
-          if (mb_reboot) {
-            if (dirty) g_store.save(settings);  // a write just before the reboot would otherwise be lost
-            if (g_ctl.paused()) hw::set_backup_word(PAUSE_REBOOT_MAGIC);  // restore_pause keeps it across this reset
-            hw::system_reset();  // the bootloader's 1.5 s window follows (oem_update.py --modbus-reboot)
-          }
+          // M8: line changes (by Modbus or the menu) wait until no reply is going out. The address is read per
+          // frame, so it needs nothing here.
           const uint32_t want_baud = modbus_baud(settings);
           if (want_baud != mb_baud && set_line_baud(want_baud)) {
             mb_baud = want_baud;
@@ -324,7 +320,11 @@ int main() {
               g_ctl.start_diag(float(c.diag_v100) / 100.0f, float(c.diag_a10) / 10.0f, uint8_t(c.diag_mask),
                                c.diag_seconds, now);
             }
-            mb_reboot = c.reboot;
+            if (c.reboot && !restarting) {  // HR 120: standby first, then the restart above (after this reply)
+              g_ctl.halt();
+              restarting = true;
+              restart_ms = now;
+            }
             if (out > 0 && hw::rs485_send(g_mb_resp, out)) {
               mb_was_busy = true;
               mb_tx_start = now;

@@ -13,7 +13,7 @@
 
 namespace oem {
 
-constexpr uint16_t OEM_FW_VERSION = 0x030B;
+constexpr uint16_t OEM_FW_VERSION = 0x030C;
 constexpr uint16_t HR_HEARTBEAT = 100, HR_EXT_FIRST = 101, HR_EXT_LAST = 107, HR_PAUSE = 110, HR_CLEAR_FAULT = 111,
                    HR_RELAY_CMD = 112, HR_CHARGE_NOW = 113, HR_REBOOT = 120;
 constexpr uint16_t REBOOT_MAGIC = 0xB007;
@@ -220,6 +220,8 @@ class OemRegisters : public RegisterBank {
                       : reg == HR_CLEAR_FAULT || reg == HR_CHARGE_NOW ? v[i] == 1
                                                                        : v[i] <= 1;
       if (!ok) return MB_EX_ILLEGAL_VALUE;
+      // A reboot would throw away the menu's unsaved edits; the bridge's installer and oem_update.py report this.
+      if (reg == HR_REBOOT && t_.menu_open) return MB_EX_BUSY;
     }
     for (uint16_t i = 0; i < n; i++) {
       switch (start + i) {

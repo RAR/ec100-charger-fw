@@ -27,6 +27,7 @@ tests/test_oem_modbus_source
 tests/test_oem_eg4
 tests/test_oem_jk
 tests/test_oem_jkpb
+tests/test_charger_update
 
 # vendor / third-party protocol documents
 *.pdf

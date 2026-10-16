@@ -49,8 +49,9 @@ The module fallback settings (HR 15 and 16) are sent to the modules at boot, so 
 after 1.5 s without RS485 traffic, so polling faster keeps the board in the bootloader.
 
 **Update without a power-cycle.** `oem_update.py --modbus-reboot` (with `--modbus-baud 9600` and `--modbus-addr 1` as defaults)
-first writes HR 120 = 0xB007 at the Modbus settings, then runs the usual handshake at 460800 baud. The bootloader window is
-only 1.5 s, so the handshake starts right after the reply. If the board doesn't answer (it may be running stock), the tool warns
-and carries on, and you power-cycle as before. If the board acked but the bootloader hasn't answered within about 3 s,
+first writes HR 120 = 0xB007 at the Modbus settings, then runs the usual handshake at 460800 baud. Since 3.12 the board
+first puts both modules in standby and resets about a second after the reply (at most 3 s); the bootloader window is
+only 1.5 s, so the handshake starts right after the reply and keeps trying. If the board doesn't answer (it may be running stock), the tool warns
+and carries on, and you power-cycle as before. If the board acked but the bootloader hasn't answered within about 5 s,
 the tool says so: power-cycle the board then, while it keeps waiting. `oem_modbus.py reboot-bootloader` sends the same
 request on its own.

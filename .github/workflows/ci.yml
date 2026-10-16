@@ -104,6 +104,11 @@ jobs:
           mv charger.dat "charger-$GITHUB_REF_NAME.dat"
           mv charger.elf "charger-$GITHUB_REF_NAME.elf"
           mv charger.bin "charger-$GITHUB_REF_NAME.bin"
-          sha256sum charger-* > SHA256SUMS
+          # What the WiFi bridge's charger_update reads from releases/latest/download/manifest.json.
+          dat="charger-$GITHUB_REF_NAME.dat"
+          printf '{"version": "%s", "file": "%s", "size": %d, "sha256": "%s"}\n' "${GITHUB_REF_NAME#v}" "$dat" \
+            "$(stat -c %s "$dat")" "$(sha256sum "$dat" | cut -d' ' -f1)" > manifest.json
+          cat manifest.json
+          sha256sum charger-* manifest.json > SHA256SUMS
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "OEM firmware $GITHUB_REF_NAME" \
-            --generate-notes charger-* SHA256SUMS
+            --generate-notes charger-* SHA256SUMS manifest.json

@@ -33,3 +33,25 @@ Both tools take `--bridge HOST` in place of `--port`:
 ```
 
 For an update, the tool sets the bridge to 9600 for the Modbus reboot, then 460800 for the bootloader, then back to 9600.
+
+## Charger firmware updates from Home Assistant
+
+The bridge shows the charger's firmware as an update entity, **Charger firmware update** (the `charger_update`
+component). Every 6 hours, and when you press "check for updates", it reads the latest release's `manifest.json` from
+GitHub (`RAR/ec100-charger-fw` by default; set `repo:` for a fork). When the release is newer than the charger's
+version, Home Assistant offers it.
+
+**Install** (only ever when you press it):
+1. The bridge downloads the release's `.dat` and checks its size and SHA-256 against the manifest.
+2. It takes the RS485 line from Modbus polling and reads the charger's version and state. **While the charger is
+   charging it refuses**: pause it first. It also refuses while the panel menu is open (3.12 and later) or Passthrough is on.
+3. It asks the charger to reboot into the bootloader (HR 120; the charger puts its modules in standby first), installs
+   the image at 460800 baud, and gives the line back to Modbus. Progress shows in Home Assistant; the whole install
+   takes about 15 s. Settings and a pause are kept.
+
+If an install fails part way, the entity says so: **power-cycle the charger, then press Install again** (the
+bootloader erases the app area only once per boot, so it must be a fresh boot). A charger that doesn't answer Modbus
+(stuck in the bootloader, or running the stock firmware) keeps showing the last version the bridge read (or none,
+after a bridge restart), so Install stays offered; it then waits up to 60 s for you to power-cycle the charger. The
+bridge talks to Modbus address 1 (the charger's default); with another address it can't ask the charger to reboot,
+and you have to power-cycle it. While an install runs, the Passthrough switch and the RS485 baud select are refused.
