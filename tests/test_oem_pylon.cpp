@@ -140,7 +140,8 @@ static void test_poller_charge_enable_and_alarm() {
   Limits l = p.limits(s, 1100);
   CHECK(l.fresh && !l.allowed && l.alarm);
   CHECK_NEAR(l.ccl, 0.0, 0.001);
-  // Keep 0x61 and 0x63 fresh but stop answering 0x62: the alarm expires after 3 s.
+  // Keep 0x61 and 0x63 fresh but stop answering 0x62: after 3 s the source is stale, and as the last fresh state
+  // was an alarm, charging stays off (no silent return to charging without the alarm channel).
   uint8_t out[REQUEST_LEN + 1];
   for (uint32_t t = 1500; t <= 5000; t += 500) {
     const size_t n = p.poll(t, out);
@@ -149,7 +150,33 @@ static void test_poller_charge_enable_and_alarm() {
     if (strncmp(reinterpret_cast<const char *>(out), "~201246630000", 13) == 0) feed(p, A63_ON, t + 20);
   }
   l = p.limits(s, 5100);
-  CHECK(l.fresh && l.allowed && !l.alarm);
+  CHECK(l.stale && !l.allowed);
+}
+
+static void test_poller_needs_the_alarm_reply() {
+  PylonSource p;
+  oem::Settings s = oem::default_settings();
+  run_cycle(p, 0, A61, A62_CLEAR, A63_ON);
+  CHECK(p.limits(s, 1100).fresh && !p.limits(s, 1100).stale && p.limits(s, 1100).allowed);
+  // 0x62 goes unanswered (or answers with an error) while 0x61 and 0x63 keep coming: stale (E15) after 3 s, on the
+  // fallback limits; the last fresh state was fine, so the fallback may charge.
+  uint8_t out[REQUEST_LEN + 1];
+  for (uint32_t t = 1500; t <= 5000; t += 500) {
+    CHECK(p.poll(t, out) == REQUEST_LEN);
+    if (strncmp(reinterpret_cast<const char *>(out), "~201246610000", 13) == 0) feed(p, A61, t + 20);
+    if (strncmp(reinterpret_cast<const char *>(out), "~201246630000", 13) == 0) feed(p, A63_ON, t + 20);
+  }
+  const Limits l = p.limits(s, 5100);
+  CHECK(l.stale && l.allowed);
+  CHECK_NEAR(l.ccl, 10.0, 0.001);  // Fallback current
+  // 0x62 answers again: fresh as soon as it does.
+  for (uint32_t t = 5500; t <= 6500; t += 500) {
+    CHECK(p.poll(t, out) == REQUEST_LEN);
+    const char *cmd = reinterpret_cast<const char *>(out);
+    feed(p, strncmp(cmd, "~201246610000", 13) == 0 ? A61 : strncmp(cmd, "~201246620000", 13) == 0 ? A62_CLEAR : A63_ON,
+         t + 20);
+  }
+  CHECK(!p.limits(s, 6600).stale);
 }
 
 static void test_poller_stale_fallback() {
@@ -311,6 +338,7 @@ int main() {
   test_rejections();
   test_poller_fresh_limits();
   test_poller_charge_enable_and_alarm();
+  test_poller_needs_the_alarm_reply();
   test_poller_stale_fallback();
   test_poller_stale_after_a_bms_stop();
   test_poller_latch_without_fresh();

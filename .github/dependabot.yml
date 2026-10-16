@@ -1,0 +1,8 @@
+# Keeps the pinned GitHub Actions current. The Python tools' requirements are left alone on purpose: they are only
+# used on a desk, and a new pyserial or python-can release is not a reason for a firmware PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

@@ -20,7 +20,8 @@ The OEM firmware can take its limits from a BMS on the RS485 jack instead of the
 - **Honoured:** charge voltage limit (CVL), charge current limit (CCL), charge enable (status bit 7), the alarm bits (a
   BMS alarm gives E12), SOC for the start/stop thresholds, the highest cell voltage and the battery voltage.
   **Not used:** the current in 0x61.
-- **Stale rule.** Without a valid 0x61 and a valid 0x63 within 3 s the charger raises E15 and charges on the Panel limits,
+- **Stale rule.** Without a valid 0x61, 0x62 and 0x63 within 3 s the charger raises E15 (since 3.11 the alarm reply
+  counts too: a BMS whose alarms can't be read isn't charged from at its own limits) and charges on the Panel limits,
   with the current capped at Fallback current (HR 9), unless the BMS's last fresh word was a stop (charge enable off or
   an alarm): then it stays stopped, with E15, until the BMS answers again. Set Fallback current to 0 to stop charging
   when the BMS is gone.

@@ -399,3 +399,4 @@ chargers: Source mode 2, Charge V 57.00, Stop V 57.00, Start SOC 85, Stop SOC 10
   on the bench, 2026-10-15, it ignored it). 146/146 frames; 3.10 came up paused, and HR 0-6, 9, 14 and 16 read back
   exactly as before the round trip.
 - `oem_update.py` DATA_ACK_S is now 3 s.
+- Up + Down on 3.10 checked on the panel by the user: the SOC field counts down, and the board restarts at 0.

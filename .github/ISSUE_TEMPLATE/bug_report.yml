@@ -1,0 +1,43 @@
+name: Bug report
+description: Something the firmware or the tools do wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This firmware is not official Eco-Worthy firmware and comes with no warranty. If the charger is doing something
+        unsafe right now, switch it off (AC) first; the BMS is the last line of defence.
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version
+      description: The `version` line of `oem_modbus.py status`, or the release you installed.
+      placeholder: "3.11"
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source mode (HR 6)
+      options: ["0 Panel", "1 Pylontech", "2 Modbus (WiFi bridge / YamBMS)", "3 EG4", "4 JK-B", "5 JK-PB", "Not sure"]
+    validations:
+      required: true
+  - type: input
+    id: battery
+    attributes:
+      label: Battery and BMS
+      description: Chemistry, cell count, BMS make and model, and how it's wired to the charger.
+      placeholder: "16S LFP, JK-PB2A16S20P, RS485 to the charger's rear jack"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: Include any error code (E1-E17) on the display.
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Status and settings
+      description: Output of `oem_modbus.py ... status` and `oem_modbus.py ... get 0 1 2 3 4 5 6 9`, if you can get it.
+      render: text

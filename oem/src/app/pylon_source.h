@@ -1,7 +1,7 @@
 // oem/src/app/pylon_source.h: the Pylontech limit source (spec 2026-10-15-oem-pylontech-source-design.md §4-5). The
 // board is the RS485 master: one request every PYLON_POLL_MS cycling 0x61 -> 0x62 -> 0x63; a reply counts within
-// PYLON_REPLY_MS of its request and is parsed as the command polled. Fresh while a 0x61 and a 0x63 have both arrived
-// within PYLON_FRESH_MS; otherwise Panel limits capped at Fallback current, flagged stale (E15), unless the last
+// PYLON_REPLY_MS of its request and is parsed as the command polled. Fresh while a 0x61, a 0x62 and a 0x63 have all
+// arrived within PYLON_FRESH_MS (a BMS whose alarms can't be read isn't trusted to charge from); otherwise Panel limits capped at Fallback current, flagged stale (E15), unless the last
 // fresh state was a BMS stop (charge enable off or an alarm): that holds charging off until the BMS is fresh again.
 #pragma once
 #include <algorithm>
@@ -47,7 +47,10 @@ class PylonSource final : public PolledSource {
     return pylon::build_request(pending_, reinterpret_cast<char *>(out));
   }
 
-  bool fresh(uint32_t now) const { return recent_(has_analog_, analog_ms_, now) && recent_(has_mgmt_, mgmt_ms_, now); }
+  bool fresh(uint32_t now) const {
+    return recent_(has_analog_, analog_ms_, now) && recent_(has_alarm_, alarm_ms_, now) &&
+           recent_(has_mgmt_, mgmt_ms_, now);
+  }
 
   Limits limits(const Settings &s, uint32_t now) const override {
     if (!fresh(now)) {
@@ -56,7 +59,7 @@ class PylonSource final : public PolledSource {
     return {mgmt_.cvl,
             mgmt_.ccl,
             mgmt_.charge_enable,
-            recent_(has_alarm_, alarm_ms_, now) && alarm_,
+            alarm_,
             false,
             analog_.soc,
             analog_.battery_v,
@@ -121,7 +124,7 @@ class PylonSource final : public PolledSource {
     // clears the latch.
     const bool says_stop = (pending_done == pylon::CID_MGMT && !mgmt_.charge_enable) ||
                            (pending_done == pylon::CID_ALARM && alarm_);
-    if (fresh(now)) stopped_ = !mgmt_.charge_enable || (recent_(has_alarm_, alarm_ms_, now) && alarm_);
+    if (fresh(now)) stopped_ = !mgmt_.charge_enable || alarm_;
     else if (says_stop) stopped_ = true;
   }
 
