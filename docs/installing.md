@@ -42,7 +42,9 @@ Start `oem_update.py`, then power-cycle the board while it waits. The bootloader
 460800 baud on the RS485 jack J5. On a charger in the unit, the stock v1 app (1.01.1105) has also handed over by itself
 within a few seconds of the handshake starting (2026-10-16, over the bridge); on the bench it ignored the handshake. If
 nothing happens within a few seconds, power-cycle.
-If the install fails on the first frame with a small-FIFO USB-RS485 adapter, retry with `--frame-bytes 64`.
+If the install fails on the first frame with a small-FIFO USB-RS485 adapter, retry with `--frame-bytes 64`. Through
+the WiFi bridge (`--bridge`) 64 is the default: a larger frame doesn't fit the ESP32's UART FIFO, and a gap in the
+middle of a frame makes the bootloader drop it.
 
 **Revert to stock.** Rebuild the stock app image from a flash dump of the stock board (the stock firmware isn't in this
 repository), then install it the same way. Our firmware hands over by itself, so `--modbus-reboot` (or Up + Down for

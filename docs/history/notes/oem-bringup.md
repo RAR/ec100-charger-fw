@@ -400,3 +400,19 @@ chargers: Source mode 2, Charge V 57.00, Stop V 57.00, Start SOC 85, Stop SOC 10
   exactly as before the round trip.
 - `oem_update.py` DATA_ACK_S is now 3 s.
 - Up + Down on 3.10 checked on the panel by the user: the SOC field counts down, and the board restarts at 0.
+
+## Charger update from Home Assistant through bridge B (3.12, 2026-10-16)
+
+- Release v3.12 with `manifest.json`; bridge B OTA'd with `charger_update`. The entity showed 3.10 -> 3.12 available.
+- Install, charger B paused: 4.4 s on the line (download first), B came up on 3.12, paused, settings kept.
+- **Failure under load.** With the bridge's web server polled during the install (as a watching script did), the
+  install broke off a frame or two in (no ack within 3 s; reproduced twice). Cause: a 265-byte frame doesn't fit the
+  ESP32's 128-byte UART TX FIFO, so the driver refills it mid-frame; a late refill (WiFi and web traffic) leaves a gap,
+  the bootloader (which ends a frame at an idle line) gets two CRC-bad halves and acks neither. The frame-187 failure
+  through Passthrough on 2026-10-16 fits the same cause. Fix: 64-byte frames (73 bytes on the line) from the bridge's
+  installer and from `oem_update.py --bridge`. With it, two installs under heavier polling went through (6 s each),
+  and `oem_update.py --bridge` took 584/584 frames.
+- Recovery path, live: after a failed install the user power-cycled B and pressed Install in HA; the bridge found B
+  silent, waited for the bootloader and installed 3.12 with a fresh erase.
+- One install into the still-running bootloader of a failed one (no power-cycle) also ended with a working 3.12, but
+  that's against the rule (no erase); B was reinstalled cleanly afterwards.
