@@ -95,7 +95,7 @@ Protocol notes: [`docs/history/notes/eg4-bms-protocol.md`](history/notes/eg4-bms
 
 ## JK-PB BMS source
 
-Firmware 3.9, Source mode 5. Tested on a real pack (below); charging from it is not yet tested. For the JK-PB inverter series
+Source mode 5, added in firmware 3.9. Tested on a real pack (below); charging from it is not yet tested. For the JK-PB inverter series
 (PB-series packs with RS485-1 and RS485-2 ports). Like the other polled sources the board is the RS485 master and the jack
 belongs to the BMS: no Modbus server, no bridge polling, no `--modbus-reboot`. Menu-only: HR 6 over Modbus refuses 5. IR 5
 reads 5. Protocol notes: [`docs/history/notes/jk-pb-protocol.md`](history/notes/jk-pb-protocol.md).

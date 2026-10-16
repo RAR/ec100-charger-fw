@@ -1,5 +1,5 @@
 # Host tests, tool tests and the OEM board firmware build on every push and pull request.
-# A tag vMAJOR.MINOR (e.g. v3.9) also publishes a GitHub release with the firmware image; the tag must match
+# A tag vMAJOR.MINOR (e.g. v3.10) also publishes a GitHub release with the firmware image; the tag must match
 # OEM_FW_VERSION in oem/src/app/modbus_map.h.
 name: CI
 

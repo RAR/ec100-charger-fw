@@ -1,6 +1,6 @@
 # EC100 charger replacement firmware
 
-[![CI](https://github.com/RAR/ec100-charger-firmware/actions/workflows/ci.yml/badge.svg)](https://github.com/RAR/ec100-charger-firmware/actions/workflows/ci.yml)
+[![CI](https://github.com/RAR/ec100-charger-fw/actions/workflows/ci.yml/badge.svg)](https://github.com/RAR/ec100-charger-fw/actions/workflows/ci.yml)
 
 Replacement firmware for the stock GD32 control board of the Eco-Worthy 48 V 100 A charger (EC100). It keeps the
 stock panel, buttons and display, runs behind the untouched stock bootloader (so the stock firmware can always be
@@ -22,7 +22,7 @@ reinstalled), and drives the charger's two NASN RM4850-B rectifier modules over 
 - **Remote control:** a Modbus RTU server on the RS485 jack, and an optional ESPHome WiFi bridge for Home Assistant,
   the YamBMS relay and remote firmware updates.
 
-**Status (2026-10-16).** Firmware 3.9 runs two chargers on a 16S LFP bank, in Source mode 2 (limits from YamBMS through
+**Status (2026-10-16).** Firmware 3.10 runs two chargers on a 16S LFP bank, in Source mode 2 (limits from YamBMS through
 the WiFi bridge). It has charged at 75 A and 100 A per charger (both modules sharing exactly; heatsinks level off at
 about 85 °C at 75 A and about 91 °C at 100 A with the fans running), and the cooldown keeps the fans on after a pause
 (about 90 °C down to 62-66 °C within a minute). Live-tested sources: Panel, Modbus/YamBMS, Pylontech (simulator, a real
@@ -31,7 +31,7 @@ are in `docs/history/notes/oem-bringup.md`.
 
 ## Quick start
 
-1. Download `charger-vX.Y.dat` from the latest [release](https://github.com/RAR/ec100-charger-firmware/releases).
+1. Download `charger-vX.Y.dat` from the latest [release](https://github.com/RAR/ec100-charger-fw/releases).
 2. Set up the tools: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`, and connect a USB-RS485
    adapter to the charger's rear RJ45 RS485 jack.
 3. Install: `.venv/bin/python tools/oem_update.py --port /dev/cu.usbserial-XXXX charger-vX.Y.dat`, then power-cycle the
