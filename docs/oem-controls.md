@@ -1,6 +1,6 @@
 # Panel controls — replacement charger firmware
 
-How the front panel works with the replacement firmware (version 3.11) on the 48 V charger's control board. This
+How the front panel works with the replacement firmware (version 3.12) on the 48 V charger's control board. This
 covers the buttons, the display, the LEDs and the settings menu only. It is not the vendor's manual; for installation,
 wiring and safety, keep the original manual.
 

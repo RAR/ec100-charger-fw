@@ -23,7 +23,7 @@ Run with `.venv/bin/python` (tests: `.venv/bin/python -m pytest tools`):
 | `oem/` | The firmware: CMake build, linker script, startup, drivers (`src/hw/`) and the header-only app (`src/app/`). |
 | `tests/` | Host C++ unit tests (`make -C tests test`, `-Werror`). |
 | `tools/` | Python tools: installer, Modbus client, image builder, BMS and module simulators, with their tests. |
-| `esphome/` | The WiFi bridge (`oem-bridge.yaml`, `eco-charger-a/-b.yaml`, `components/rs485_mux`) and the ESP32-controller path. |
+| `esphome/` | The WiFi bridge (`oem-bridge.yaml`, `eco-charger-a/-b.yaml`, `components/rs485_mux`, `components/charger_update`) and the ESP32-controller path. |
 | `docs/oem-controls.md` | The panel guide. |
 | `docs/esp32-controller.md` | The ESP32-controller path. |
 | `docs/history/notes/` | Reverse-engineering and bring-up notes: the stock firmware analysis, hardware map, init sequences, BMS protocol notes and captures, the module register map, and the bench/live log. |
@@ -40,6 +40,7 @@ decompiled output (`ghidra/`, `re/`), raw CAN captures (`captures/`) and vendor 
 - **OEM firmware:** builds `oem/` with the Arm GNU Toolchain 15.3.rel2 (downloaded from Arm, SHA-256 checked, cached),
   reports FLASH/RAM in the run summary and uploads `charger.dat`/`.elf`/`.bin`.
 - **Release:** pushing a tag `vX.Y` that matches `OEM_FW_VERSION` (`oem/src/app/modbus_map.h`, e.g. `0x030A` = `v3.10`)
-  publishes a GitHub release with the firmware. A mismatched tag fails the release job.
+  publishes a GitHub release with the firmware and a `manifest.json` (version, file, size, SHA-256) that the WiFi
+  bridge's `charger_update` reads. A mismatched tag fails the release job.
 
 The ESPHome configs aren't built in CI (they need `esphome/secrets.yaml`); build them locally with `esphome compile`.

@@ -72,6 +72,7 @@ void RS485Mux::loop() {
     this->sync_settings_(this->modbus_);
     this->sync_settings_(this->stream_);
   }
+  if (this->exclusive_) return;  // the owner reads the UART itself
   MuxPort *active = this->passthrough_ ? this->stream_ : this->modbus_;
   uint8_t buf[64];
   size_t n;
@@ -88,6 +89,14 @@ void RS485Mux::set_passthrough(bool on) {
   this->modbus_->clear();
   this->stream_->clear();
   ESP_LOGI(TAG, "RS485 line -> %s", on ? "TCP passthrough" : "Modbus polling");
+}
+
+void RS485Mux::set_exclusive(bool on) {
+  if (on == this->exclusive_) return;
+  this->exclusive_ = on;
+  this->modbus_->clear();
+  this->stream_->clear();
+  ESP_LOGI(TAG, "RS485 line -> %s", on ? "firmware update" : (this->passthrough_ ? "TCP passthrough" : "Modbus polling"));
 }
 
 void RS485Mux::dump_config() {

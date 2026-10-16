@@ -1,6 +1,8 @@
 // rs485_mux: one RS485 UART shared by modbus_controller (Home Assistant polling) and stream_server (raw TCP for the
 // tools). Both read every byte they're given, so the mux hands the line to one side at a time: only the active port
-// receives bytes and may transmit. MODBUS by default; PASSTHROUGH while set_passthrough(true).
+// receives bytes and may transmit. MODBUS by default; PASSTHROUGH while set_passthrough(true). While
+// set_exclusive(true) (charger_update installing firmware) neither port is active and the mux leaves the UART alone:
+// its owner reads and writes it directly.
 // docs/history/superpowers/specs/2026-10-15-oem-bridge-home-assistant-design.md §3.
 #pragma once
 #include <deque>
@@ -52,11 +54,15 @@ class RS485Mux : public Component {
 
   void set_passthrough(bool on);
   bool passthrough() const { return this->passthrough_; }
+  void set_exclusive(bool on);
+  bool exclusive() const { return this->exclusive_; }
   void set_client_connected(bool connected) { this->client_ = connected; }
   // True once passthrough has been on for the idle timeout with no TCP client; the YAML then turns it off.
   bool idle_expired() { return this->idle_.update(this->passthrough_, this->client_, millis()); }
 
-  bool is_active(const MuxPort *port) const { return port == (this->passthrough_ ? this->stream_ : this->modbus_); }
+  bool is_active(const MuxPort *port) const {
+    return !this->exclusive_ && port == (this->passthrough_ ? this->stream_ : this->modbus_);
+  }
   uart::UARTComponent *uart() { return this->uart_; }
 
  protected:
@@ -67,6 +73,7 @@ class RS485Mux : public Component {
   MuxPort *stream_{nullptr};
   rs485_mux_logic::IdleTimer idle_{600000};
   bool passthrough_{false};
+  bool exclusive_{false};
   bool client_{false};
 };
 

@@ -20,7 +20,7 @@ reinstalled), and drives the charger's two NASN RM4850-B rectifier modules over 
 - **Gentler on the modules:** a soft start (no wake-up burst), a cooldown that keeps the fans running after a charge,
   module alarm codes as stock plus checks the stock firmware lacks (E13-E17).
 - **Remote control:** a Modbus RTU server on the RS485 jack, and an optional ESPHome WiFi bridge for Home Assistant,
-  the YamBMS relay and remote firmware updates.
+  the YamBMS relay and firmware updates (installed from GitHub releases with Home Assistant's update button).
 
 **Status (2026-10-16).** Firmware 3.10 runs two chargers on a 16S LFP bank, in Source mode 2 (limits from YamBMS through
 the WiFi bridge). It has charged at 75 A and 100 A per charger (both modules sharing exactly; heatsinks level off at

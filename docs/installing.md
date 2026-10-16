@@ -29,6 +29,9 @@ This writes `oem/build/charger.elf`, `oem/build/charger.bin` and `oem/build/char
 With `charger` running, holding Up + Down for 5 s (the SOC field counts down) puts both modules in standby and then
 restarts the board, which opens the bootloader's 1.5 s window without a power-cycle.
 
+**From Home Assistant.** With the WiFi bridge, a release can be installed from its **Charger firmware update** entity
+([WiFi bridge](wifi-bridge.md#charger-firmware-updates-from-home-assistant)); the steps below are for a PC.
+
 **Install.** Install the `.dat` that the build (or a release) produced, through the stock bootloader:
 
 ```bash

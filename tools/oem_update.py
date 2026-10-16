@@ -39,7 +39,8 @@ QUIET_S = 2.0  # > 1.5 s of silence makes the bootloader jump to the app
 
 POWER_CYCLE = "power-cycle the board before retrying (the bootloader only erases once per boot)"
 REPLY_GAP_S = 1.0  # the two handshake replies must come this close together
-REBOOT_HINT_S = 3.0  # well past the 1.5 s window: a board that acked HR 120 but never answered missed it
+# Past 3.12's standby second and the 1.5 s window: a board that acked HR 120 but never answered missed it.
+REBOOT_HINT_S = 5.0
 
 
 class UpdateError(Exception):
@@ -152,6 +153,8 @@ def modbus_reboot(port, addr, log=print, clock=time.monotonic):
     try:
         transact(port, write_single(addr, HR_REBOOT, REBOOT_MAGIC), MODBUS_REPLY_S, clock)
     except ModbusException as e:
+        if e.code == 6:  # 3.12: a reboot would lose the menu's unsaved edits
+            raise UpdateError("the menu is open on the panel (Modbus busy); close it and retry") from e
         log(f"warning: the board refused the reboot request ({e}); power-cycle it")
         return False
     except ModbusError as e:

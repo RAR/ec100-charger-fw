@@ -514,3 +514,11 @@ def test_main_bridge_turns_passthrough_off_when_the_run_fails(monkeypatch):
 
 def test_sources_know_the_polled_modes():
     assert om.SOURCES == ["Panel", "Pylontech", "Modbus", "EG4", "JK", "JK-PB"]
+
+
+def test_modbus_reboot_refused_busy_by_312_stops():
+    # 3.12 answers the IR read but refuses HR 120 with exception 06 while the menu is open.
+    port = FakePort(lambda req: read_reply(req, [0x030C]) if req[1] == 4 else with_crc(bytes([1, 0x86, 6])))
+    with pytest.raises(UpdateError, match="menu is open"):
+        modbus_reboot(port, 1, log=lambda s: None)
+    assert len(port.writes) == 2
